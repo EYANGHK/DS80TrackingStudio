@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <AssemblyName>DS80Bridge</AssemblyName>
+    <RootNamespace>DS80Bridge</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>0.1.0</Version>
+    <Product>DS80 Tracking Studio</Product>
+    <AssemblyTitle>DS80 Tracking Studio</AssemblyTitle>
+    <Company>DS80 Tracking Studio</Company>
+  </PropertyGroup>
+
+</Project>

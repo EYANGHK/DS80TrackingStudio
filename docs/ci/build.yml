@@ -1,0 +1,25 @@
+# 说明：本文件是 GitHub Actions 配置模板。
+# 当前 gh OAuth token 没有 workflow scope，因此未放在 .github/workflows 下。
+# 授权后执行：gh auth refresh -h github.com -s workflow，再把它复制到 .github/workflows/build.yml。
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build bridge
+        run: dotnet build src/DS80Bridge/DS80Bridge.csproj -c Release -p:Platform=x64
+
+      - name: Run self-tests (no hardware required)
+        run: dotnet run --project tests/DS80Bridge.SelfTest/DS80Bridge.SelfTest.csproj -c Release
+
