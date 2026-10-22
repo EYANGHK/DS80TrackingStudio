@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "type": "LensFile",
+    "version": "0.0.0",
+    "lensInfo": {
+      "serialNumber": "",
+      "modelName": "2026.10.15-24mm",
+      "distortionModel": "Spherical"
+    },
+    "name": "2026.10.15-24mm",
+    "nodalOffsetCoordinateSystem": "OpenCV",
+    "fxFyUnits": "Normalized",
+    "cxCyUnits": "Normalized",
+    "userMetadata": []
+  },
+  "sensorDimensions": {
+    "width": 35.7,
+    "height": 20.021695217,
+    "units": "Millimeters"
+  },
+  "imageDimensions": {
+    "width": 3840,
+    "height": 2160
+  },
+  "cameraParameterTables": [
+    {
+      "parameterName": "FocalLengthTable",
+      "header": "FocusEncoder, ZoomEncoder, Fx, Fy",
+      "data": "0, 0, 0.685701564, 1.222651008"
+    },
+    {
+      "parameterName": "ImageCenterTable",
+      "header": "FocusEncoder, ZoomEncoder, Cx, Cy",
+      "data": "0, 0, 0.500814986, 0.494867021"
+    },
+    {
+      "parameterName": "DistortionTable",
+      "header": "FocusEncoder, ZoomEncoder, K1, K2, K3, P1, P2",
+      "data": "0, 0, -0.0323239, 0.01389615, 0, 0, 0"
+    }
+  ],
+  "encoderTables": []
+}

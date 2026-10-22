@@ -12,4 +12,8 @@
     <ProjectReference Include="..\..\src\DS80Bridge\DS80Bridge.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\fixtures\*.xml" CopyToOutputDirectory="PreserveNewest" Link="fixtures\%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

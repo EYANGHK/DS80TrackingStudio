@@ -1,3 +1,4 @@
+using System.Text;
 using DS80Bridge.Core;
 
 namespace DS80Bridge;
@@ -40,13 +41,15 @@ public sealed class CalibrationForm : Form
         _lensGrid.SelectedObject = settings.Lens.Clone();
         Lens.NodalOffsetInUe = settings.NodalOffsetInUe;
         lens.Controls.Add(_lensGrid);
-        lens.Controls.Add(Buttons(("新建", () => { _lensGrid.SelectedObject = new LensProject(); Status("已新建未应用的项目。"); }),
+        lens.Controls.Add(Buttons(
+            ("导入 Aximmetry XML → .ulens", ImportAximmetry),
+            ("新建", () => { _lensGrid.SelectedObject = new LensProject(); Status("已新建未应用的项目。"); }),
             ("加载项目", LoadLens), ("保存项目", SaveLens), ("应用项目", ApplyLens), ("应用并导出 UE 脚本", ExportLens)));
-        lens.Controls.Add(Hint("所有相机、镜头、画幅和焦距均按项目编辑。导出的是 Lens File 初始化脚本，不是已完成的标定。\n畸变、光心、焦距和 Nodal Offset 在 UE 中使用真实画面求解。变焦/对焦改变后需采集相应标定点。"));
+        lens.Controls.Add(Hint("所有相机、镜头、画幅和焦距均按项目编辑。导出的是 Lens File 初始化脚本，不是已完成的标定。\n畸变、光心、焦距和 Nodal Offset 在 UE 中使用真实画面求解。变焦/对焦改变后需采集相应标定点。\nAximmetry XML 可直接转成 UE .ulens：拖入 Content Browser 即得到已填好曲线的 Lens File。"));
         Status("原点：" + (_engine.CurrentOrigin?.Target.Name ?? "未定位") + "；镜头：" + settings.Lens.ProjectName);
     }
 
-    private static Label Hint(string text) => new() { Dock = DockStyle.Top, Height = 80, Padding = new Padding(12), Text = text };
+    private static Label Hint(string text) => new() { Dock = DockStyle.Top, Height = 96, Padding = new Padding(12), Text = text };
     private FlowLayoutPanel Buttons(params (string Text, Action Action)[] actions)
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 80, Padding = new Padding(8), AutoScroll = true };
@@ -101,6 +104,41 @@ public sealed class CalibrationForm : Form
         _lensGrid.SelectedObject = LensProject.Load(dialog.FileName);
         Status("已载入编辑器，点击“应用项目”生效。");
     }
+    private void ImportAximmetry()
+    {
+        using var open = new OpenFileDialog { Filter = "Aximmetry 镜头校准|*.xml|XML 文件|*.xml" };
+        if (open.ShowDialog(this) != DialogResult.OK) return;
+
+        var document = AximmetryLensDocument.Load(open.FileName);
+        var project = Lens.Clone();
+        document.ApplyTo(project);
+        _lensGrid.SelectedObject = project;
+
+        using var save = new SaveFileDialog
+        {
+            Filter = "Unreal Lens File|*.ulens",
+            FileName = SafeFileName(document.Name) + ".ulens",
+        };
+        if (save.ShowDialog(this) != DialogResult.OK)
+        {
+            Status("已解析 XML 并填入镜头项目；尚未导出 .ulens。");
+            return;
+        }
+
+        string json = document.ToUlensJson(project.ImageWidth, project.ImageHeight, project.LensModel, project.SerialNumber);
+        File.WriteAllText(save.FileName, json, new UTF8Encoding(false));
+
+        var point = document.Points[0];
+        Status($"已导出 {Path.GetFileName(save.FileName)}：{document.Points.Count} 个采样点，" +
+               $"Fx={point.Fx:F5} Fy={point.Fy:F5}，K1={point.K1:F5}。拖入 UE Content Browser 即可。");
+    }
+
+    private static string SafeFileName(string name)
+    {
+        foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
+        return string.IsNullOrWhiteSpace(name) ? "lens" : name;
+    }
+
     private void SaveLens()
     {
         using var dialog = new SaveFileDialog { Filter = "DS80 镜头项目|*.ds80lens.json", FileName = "project.ds80lens.json" };

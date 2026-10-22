@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<AximmetryCameraLensDesc version="2025.3.0" Name="2026.10.15-24mm" CameraType="Standalone" SelectedCameraPreset="Custom" SensorWidth="35.7" LegacyDeltaHead="False" DeltaHeadPos="-18.69698, -59.7103, 204.7966" DeltaHeadRot="89.10847, 90.73669, 89.61784" CenterHeight="0" TiltCorrection="0" InvertPan="False" InvertTilt="False" MaxZoom="0" MinZoom="0" InvertedZoom="False" ZoomInterpolationMode="2" LightTransmittance="0.75" ExternalLensData="False" TrackingCalibrated="True" UseNormalizedRadialInterpolation="True" UseLinearInterpolation="False" UseLinearInterpolationForAperture="False">
+	<Items type="dictionary">
+		<key type="CameraLensDescID" Zoom="0" Focus="0" />
+		<item type="CameraLensDescItem" DescType="0" FocalLength="24.4795475" FOVX="72.19758" Aspect="1.7830658" Center="0.0008149858, -0.005132979" Radial="-0.0323239, 0.01389615, 0" FocusDistance="0" UseEyePointOffset="False" EyePointOffset="0" />
+	</Items>
+	<Apertures type="dictionary" />
+</AximmetryCameraLensDesc>

@@ -10,8 +10,9 @@
 └──────────┘           └─────────────────────┘         └──────────────────────────┘
 ```
 
-当前版本：**v0.3.0（S80 原生 SDK 位姿 + 坐标系修正）**
+当前版本：**v0.4.0（Aximmetry XML → UE .ulens）**
 
+- 新增 **Aximmetry 镜头 XML → UE `.ulens`**：把焦距、光心、K1/K2/K3 直接转成 UE Lens File，拖入 Content Browser 即可用。
 - 直接调用官方 **XVSDK C++ 接口**（`xv::Slam` 回调），不再经过会把位置取反的 CInterface 封装。
 - 按 XVSDK 文档修正坐标系：设备 `X 右 / Y 下 / Z 前` → Free-D `X 右 / Y 前 / Z 上`。
 - 支持多台设备按**序列号**选择（S80 / DS80），配置里记住上次使用的设备。
@@ -109,6 +110,7 @@ cd "C:\Program Files\xvsdk\bin"
 4. 看到 Pose 频率持续更新、置信度 > 0 即成功；目标为 500 Hz，读取目标为 2000 Hz。
 5. 打开右侧 **诊断** 页，与官方 `xvsdk-viewer` 的读数对照（见下节）。
 6. 点 **定位原点 (R)**，默认把当前位置/航向设为零点；目标位置与姿态模式可在「项目校准」修改。
+7. 镜头校准：**项目校准 → 镜头项目 → 导入 Aximmetry XML → .ulens**，把生成的 `.ulens` 拖进 UE Content Browser。
 
 命令行探测（不打开界面）：
 
@@ -175,6 +177,7 @@ DS80TrackingStudio/
 │  │  ├─ XvisioPoseSource.cs  按序列号连接设备、读取 SDK 原始 Pose
 │  │  ├─ SimulatorPoseSource.cs
 │  │  ├─ TrackerPipeline.cs   XVSDK → Free-D 换算 / 原点 / 安装偏移 / 滤波
+│  │  ├─ AximmetryLens.cs     Aximmetry XML → UE .ulens
 │  │  ├─ PoseMath.cs          四元数与 Free-D 角度
 │  │  ├─ FreeDEncoder.cs      29 字节 Free-D 编码 + 校验
 │  │  ├─ UdpOutput.cs         Free-D + JSON 发送
@@ -205,6 +208,7 @@ DS80TrackingStudio/
 - 原始数据诊断页（与官方 Viewer 对照）
 - 原点定位（位置/航向或完整姿态、指定目标坐标、原点文件保存/加载）
 - 镜头项目管理与 UE Lens File 初始化脚本导出（可编辑机型、画幅、焦距等；实拍求解在 UE 完成）
+- **Aximmetry XML → UE `.ulens`**（焦距、光心、K1/K2/K3；UE 5.8 导入/导出往返验证）
 - Bridge / UE 安装补偿归属切换，避免重复 Nodal Offset
 - 安装偏移（设备不在摄像机光心时的平移/旋转补偿）
 - 可选低通滤波

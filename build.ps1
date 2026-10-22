@@ -1,10 +1,14 @@
 param(
-    [switch]$FrameworkDependent
+    [switch]$FrameworkDependent,
+    # 可选输出目录；默认 dist\DS80TrackingStudio。旧版程序正在运行时用它可以避免文件占用。
+    [string]$Output
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$dist = Join-Path $root "dist\DS80TrackingStudio"
+$dist = if ([string]::IsNullOrWhiteSpace($Output)) { Join-Path $root "dist\DS80TrackingStudio" }
+        elseif ([IO.Path]::IsPathRooted($Output)) { $Output }
+        else { Join-Path $root $Output }
 
 Write-Host "== Build DS80 Tracking Studio ==" -ForegroundColor Cyan
 

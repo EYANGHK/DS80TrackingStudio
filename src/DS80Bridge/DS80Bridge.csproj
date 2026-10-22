@@ -11,7 +11,7 @@
     <AssemblyName>DS80Bridge</AssemblyName>
     <RootNamespace>DS80Bridge</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Product>DS80 Tracking Studio</Product>
     <AssemblyTitle>DS80 Tracking Studio</AssemblyTitle>
     <Company>DS80 Tracking Studio</Company>

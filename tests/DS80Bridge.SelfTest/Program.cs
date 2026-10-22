@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Windows.Forms;
@@ -29,6 +30,20 @@ internal static class Program
             Console.WriteLine("SETTINGS_PATH=" + AppSettings.SettingsPath);
             Console.WriteLine($"VERSION={s.SettingsVersion} FRAME={s.SourceFrame} SERIAL={s.DeviceSerialNumber} " +
                               $"FREED={s.FreedPort} JSON={s.JsonPort} SMOOTH={s.SmoothingEnabled}");
+            return;
+        }
+
+        if (args.Length == 3 && args[0].Equals("--aximmetry", StringComparison.OrdinalIgnoreCase))
+        {
+            var document = AximmetryLensDocument.Load(args[1]);
+            string json = document.ToUlensJson(3840, 2160, "", "");
+            File.WriteAllText(args[2], json, new System.Text.UTF8Encoding(false));
+            var first = document.Points[0];
+            Console.WriteLine($"AXI name={document.Name} sensor={document.SensorWidthMm}x{document.SensorHeightMm:F4}mm " +
+                              $"focal={first.FocalLengthMm:F4}mm fx={first.Fx:F6} fy={first.Fy:F6} " +
+                              $"center=({first.PrincipalX:F7},{first.PrincipalY:F7}) " +
+                              $"K=({first.K1:F6},{first.K2:F6},{first.K3:F6}) points={document.Points.Count}");
+            Console.WriteLine("ULENS=" + Path.GetFullPath(args[2]));
             return;
         }
 
@@ -116,6 +131,7 @@ internal static class Program
         TestHighRateSmoothing();
         TestDocumentedXvisioFrame();
         TestSettingsMigration();
+        TestAximmetryUlens();
         if (args.Contains("--timing")) Test500HzLoopback();
 
         Console.WriteLine();
@@ -632,5 +648,67 @@ internal static class Program
         {
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
         }
+    }
+
+    private static void TestAximmetryUlens()
+    {
+        Console.WriteLine("[14] Aximmetry XML -> UE .ulens");
+        string fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "2026.10.15-24mm.xml");
+        Check("测试 XML 存在", File.Exists(fixture), fixture);
+        if (!File.Exists(fixture)) return;
+
+        var document = AximmetryLensDocument.Load(fixture);
+        Check("镜头名称", document.Name == "2026.10.15-24mm", document.Name);
+        Check("传感器宽度", Near(document.SensorWidthMm, 35.7, 1e-9), $"{document.SensorWidthMm}");
+        Check("传感器高度", Near(document.SensorHeightMm, 20.021695, 1e-5), $"{document.SensorHeightMm:F6}");
+
+        var point = document.Points[0];
+        Check("焦距", Near(point.FocalLengthMm, 24.4795475, 1e-7), $"{point.FocalLengthMm:F7}");
+        Check("Fx = 0.5/tan(HFOV/2)", Near(point.Fx, 0.68570156, 1e-7), $"{point.Fx:F8}");
+        Check("Fy = Fx × Aspect", Near(point.Fy, 1.22265101, 1e-7), $"{point.Fy:F8}");
+        Check("PrincipalPoint", Near(point.PrincipalX, 0.5008149858, 1e-9) &&
+            Near(point.PrincipalY, 0.494867021, 1e-9), $"({point.PrincipalX:F7},{point.PrincipalY:F7})");
+        Check("K1/K2/K3", Near(point.K1, -0.0323239, 1e-9) && Near(point.K2, 0.01389615, 1e-9) && point.K3 == 0);
+
+        string json = document.ToUlensJson(3840, 2160, "", "");
+        using var parsed = System.Text.Json.JsonDocument.Parse(json);
+        var root = parsed.RootElement;
+        Check("Metadata type/version",
+            root.GetProperty("metadata").GetProperty("type").GetString() == "LensFile" &&
+            root.GetProperty("metadata").GetProperty("version").GetString() == "0.0.0");
+        Check("Distortion model",
+            root.GetProperty("metadata").GetProperty("lensInfo").GetProperty("distortionModel").GetString() == "Spherical");
+        Check("Sensor 单位", root.GetProperty("sensorDimensions").GetProperty("units").GetString() == "Millimeters");
+        Check("图像尺寸", root.GetProperty("imageDimensions").GetProperty("width").GetInt32() == 3840 &&
+            root.GetProperty("imageDimensions").GetProperty("height").GetInt32() == 2160);
+
+        var tables = root.GetProperty("cameraParameterTables");
+        Check("三张参数表", tables.GetArrayLength() == 3);
+        Check("焦距表头", tables[0].GetProperty("parameterName").GetString() == "FocalLengthTable" &&
+            tables[0].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, Fx, Fy");
+        Check("光心表头", tables[1].GetProperty("parameterName").GetString() == "ImageCenterTable" &&
+            tables[1].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, Cx, Cy");
+        Check("畸变表头", tables[2].GetProperty("parameterName").GetString() == "DistortionTable" &&
+            tables[2].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, K1, K2, K3, P1, P2");
+
+        string[] focalRow = tables[0].GetProperty("data").GetString()!.Split(", ");
+        string[] centerRow = tables[1].GetProperty("data").GetString()!.Split(", ");
+        string[] distortionRow = tables[2].GetProperty("data").GetString()!.Split(", ");
+        Check("焦距表首行", focalRow.Length == 4 &&
+            Near(double.Parse(focalRow[2], CultureInfo.InvariantCulture), 0.68570156, 1e-6) &&
+            Near(double.Parse(focalRow[3], CultureInfo.InvariantCulture), 1.22265101, 1e-6));
+        Check("光心表首行", centerRow.Length == 4 &&
+            Near(double.Parse(centerRow[2], CultureInfo.InvariantCulture), 0.5008149858, 1e-6) &&
+            Near(double.Parse(centerRow[3], CultureInfo.InvariantCulture), 0.494867021, 1e-6));
+        Check("畸变表首行", distortionRow.Length == 7 &&
+            Near(double.Parse(distortionRow[2], CultureInfo.InvariantCulture), -0.0323239, 1e-6) &&
+            Near(double.Parse(distortionRow[3], CultureInfo.InvariantCulture), 0.01389615, 1e-6) &&
+            Near(double.Parse(distortionRow[4], CultureInfo.InvariantCulture), 0, 1e-9));
+
+        var project = new LensProject();
+        document.ApplyTo(project);
+        Check("回填镜头项目", Near(project.SensorWidthMm, 35.7, 1e-6) &&
+            Near(project.SensorHeightMm, 20.0217, 1e-4) &&
+            Near(project.FocalLengthMm, 24.4795, 1e-4) && project.FilmbackConfirmed);
     }
 }
