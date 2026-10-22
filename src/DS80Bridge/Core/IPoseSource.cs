@@ -7,6 +7,8 @@ public interface IPoseSource : IDisposable
     string Name { get; }
     bool IsConnected { get; }
     string Status { get; }
+    /// <summary>主机轮询频率，可高于 Pose 更新频率以减少时钟相位造成的漏读。</summary>
+    int SuggestedReadRateHz => 1000;
 
     /// <summary>建立连接。返回 false 时 message 给出原因。</summary>
     bool Connect(out string message);

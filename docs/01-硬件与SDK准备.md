@@ -46,18 +46,18 @@ C:\Program Files\xvsdk\
 ├─ bin\
 │  ├─ all_stream.exe                 厂商验证工具（先跑它）
 │  ├─ demo-api.exe                   官方 API 示例
-│  ├─ xvisio-CInterface-wrapper.dll  本程序使用的 C 接口封装
-│  ├─ xvsdk.dll / xvslam.dll
+│  ├─ xvsdk.dll / xvslam.dll         官方 C++ SDK（本程序直接链接）
 │  ├─ libusb-1.0.dll
 │  └─ python-wrapper\                ctypes 示例
 ├─ include\xvsdk\xv-sdk.h            C++ API
-├─ lib\                              静态库（本程序不需要）
+├─ lib\                              静态库（xvsdk.lib，native 桥接使用）
 ├─ samples\                          demo 源码
 └─ doc\xvsdk\                        Doxygen 文档
 ```
 
 > 本机已静默安装到此路径，`DS80Bridge.exe` 会自动找到它。
 > 如果装到别处，设置环境变量 `XVSDK_BIN` 指向 `...\bin` 即可。
+> 程序自带的 `DS80NativeBridge.dll` 由 `native\build.cmd` 生成，必须与 `DS80Bridge.exe` 放在同一目录。
 
 ---
 
@@ -146,7 +146,8 @@ Timeout: no device found
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `连接结果: False（耗时 10052 ms）` + `Timeout: no device found` | 没插设备 / 没装 libusb 驱动 / 线只有充电功能 | 先跑 `all_stream.exe` |
-| `DllNotFoundException: xvisio-CInterface-wrapper.dll` | SDK 没装或路径不对 | 设 `XVSDK_BIN`，或装到默认路径 |
+| `DllNotFoundException: DS80NativeBridge.dll` | 没编译 native 桥接，或没和 exe 放一起 | 在仓库根目录运行 `native\build.cmd`，或改用 `build.ps1` 生成的 dist |
+| `SDK 返回无效 Pose（ABI / 数值检查失败）` | 桥接 DLL 与 C# 结构体版本不一致 | 重新运行 `native\build.cmd` 并重新构建发布包 |
 | `BadImageFormatException` | 程序不是 x64 | 用发布的 x64 版本；不要用 AnyCPU |
 | `all_stream.exe` 有图像但没有 pose | 固件/模式问题 | 升级固件；确认设备支持 6DoF 输出 |
 | pose 置信度长期为 0 | 镜头被完全遮挡、纯白墙、暗光 | 增加纹理/光照；SLAM 需要特征点 |

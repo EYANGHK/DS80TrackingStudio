@@ -102,7 +102,7 @@ public static class JsonProtocol
         sb.Append(",\"t\":").Append(f.Timestamp.ToString("F6", CultureInfo.InvariantCulture));
         sb.Append(",\"valid\":").Append(f.Valid ? "true" : "false");
         sb.Append(",\"conf\":").Append(f.Confidence.ToString("F4", CultureInfo.InvariantCulture));
-        sb.Append(",\"age\":").Append(f.DataAgeMs.ToString("F1", CultureInfo.InvariantCulture));
+        sb.Append(",\"age\":").Append(double.IsFinite(f.DataAgeMs) ? f.DataAgeMs.ToString("F1", CultureInfo.InvariantCulture) : "null");
         sb.Append(",\"x\":").Append(f.X.ToString("F6", CultureInfo.InvariantCulture));
         sb.Append(",\"y\":").Append(f.Y.ToString("F6", CultureInfo.InvariantCulture));
         sb.Append(",\"z\":").Append(f.Z.ToString("F6", CultureInfo.InvariantCulture));

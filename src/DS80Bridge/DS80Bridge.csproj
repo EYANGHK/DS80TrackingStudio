@@ -11,10 +11,14 @@
     <AssemblyName>DS80Bridge</AssemblyName>
     <RootNamespace>DS80Bridge</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.1.0</Version>
+    <Version>0.3.0</Version>
     <Product>DS80 Tracking Studio</Product>
     <AssemblyTitle>DS80 Tracking Studio</AssemblyTitle>
     <Company>DS80 Tracking Studio</Company>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\tools\ue_lens_setup.py" LogicalName="DS80Bridge.ue_lens_setup.py" />
+    <Content Include="..\..\native\bin\DS80NativeBridge.dll" Link="DS80NativeBridge.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('..\..\native\bin\DS80NativeBridge.dll')" />
+  </ItemGroup>
 </Project>

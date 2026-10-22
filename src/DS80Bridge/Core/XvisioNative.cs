@@ -1,78 +1,51 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DS80Bridge.Core;
 
-/// <summary>
-/// 对 Xvisio 官方 C 接口封装 DLL (xvisio-CInterface-wrapper.dll) 的 P/Invoke 绑定。
-/// 该 DLL 由 XVSDK 3.2.0 Windows 版安装包提供，位于 &lt;SDK&gt;\bin 目录。
-/// </summary>
+/// <summary>固定 C ABI，直接复制官方 C++ SDK Pose，不经过厂商 CInterface 包装层。</summary>
 internal static class XvisioNative
 {
-    public const string DllName = "xvisio-CInterface-wrapper.dll";
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct Vector3F
-    {
-        public float X;
-        public float Y;
-        public float Z;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct QuaternionF
-    {
-        // 官方头文件注释: 四元数顺序为 [qx, qy, qz, qw]
-        public float Qx;
-        public float Qy;
-        public float Qz;
-        public float Qw;
-    }
-
+    public const string DllName = "DS80NativeBridge.dll";
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_device_init();
-
+    public static extern int ds80_abi_version();
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void xv_device_uninit();
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_start_slam();
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_stop_slam();
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_reset_slam();
-
-    /// <summary>
-    /// 读取当前 6DoF。返回非 0 表示成功。
-    /// position 单位: 米; orientation 为欧拉角 (x=pitch, y=yaw, z=roll)，单位: 弧度。
-    /// </summary>
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_get_6dof(
-        ref Vector3F position,
-        ref Vector3F orientationEuler,
-        ref QuaternionF quaternion,
-        ref long edgeTimestamp,
-        ref double hostTimestamp,
-        ref double confidence);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_get_6dof_prediction(
-        ref Vector3F position,
-        ref Vector3F orientationEuler,
-        ref QuaternionF quaternion,
-        ref long edgeTimestamp,
-        ref double hostTimestamp,
-        ref double confidence,
-        double prediction);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int xv_get_imu(
-        ref Vector3F accel,
-        ref Vector3F gyro,
-        ref long edgeTimestamp,
-        ref double hostTimestamp);
-
+    public static extern int ds80_pose_size();
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern int xv_get_sn(out IntPtr serialNumber);
+    public static extern int ds80_enumerate(StringBuilder serials, int capacity);
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int ds80_connect(string serial, StringBuilder actualSerial, int capacity);
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int ds80_read_pose(out SdkPose output, int capacity);
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int ds80_test_pose(out SdkPose output, int capacity);
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void ds80_disconnect();
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern void ds80_last_error(StringBuilder output, int capacity);
+    public static string LastError()
+    {
+        var text = new StringBuilder(4096);
+        ds80_last_error(text, text.Capacity);
+        return text.ToString();
+    }
+}
+
+/// <summary>SDK 同一回调帧的原始值：位置米，欧拉角弧度，四元数 XYZW。</summary>
+[StructLayout(LayoutKind.Sequential, Pack = 8)]
+public struct SdkPose
+{
+    public uint Version, Size;
+    public ulong Sequence;
+    public long EdgeTimestampUs;
+    public double HostTimestamp, Confidence;
+    public double X, Y, Z;
+    public double Qx, Qy, Qz, Qw;
+    public double Pitch, Yaw, Roll;
+    public readonly bool IsUsable => Version == 1 && Size == 120 && Sequence > 0 &&
+        double.IsFinite(X) && double.IsFinite(Y) && double.IsFinite(Z) &&
+        double.IsFinite(Qx) && double.IsFinite(Qy) && double.IsFinite(Qz) && double.IsFinite(Qw) &&
+        double.IsFinite(Pitch) && double.IsFinite(Yaw) && double.IsFinite(Roll) &&
+        double.IsFinite(Confidence) && Confidence >= 0 && Confidence <= 1 &&
+        Math.Abs(Qx * Qx + Qy * Qy + Qz * Qz + Qw * Qw - 1) < 0.01;
 }

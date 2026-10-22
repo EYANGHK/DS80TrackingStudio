@@ -7,6 +7,12 @@ namespace DS80Bridge.Core;
 
 public sealed class AppSettings
 {
+    /// <summary>配置结构版本：2 起使用 XVSDK 原生米制 Pose 与文档坐标系。</summary>
+    public const int CurrentVersion = 2;
+
+    /// <summary>配置结构版本：2 起使用 XVSDK 原生米制 Pose 与文档坐标系；0 表示旧文件。</summary>
+    public int SettingsVersion { get; set; }
+
     // ---- 输出 ----
     public string TargetIp { get; set; } = "127.0.0.1";
     public int FreedPort { get; set; } = 40000;
@@ -19,7 +25,7 @@ public sealed class AppSettings
     public FreedPositionOrder PositionOrder { get; set; } = FreedPositionOrder.Xyz;
 
     // ---- 坐标标定 ----
-    public SourceFramePreset SourceFrame { get; set; } = SourceFramePreset.RightHandedYUpZBack;
+    public SourceFramePreset SourceFrame { get; set; } = SourceFramePreset.XvisioXRightYDownZForward;
     public bool InvertX { get; set; }
     public bool InvertY { get; set; }
     public bool InvertZ { get; set; }
@@ -39,11 +45,16 @@ public sealed class AppSettings
     public bool SmoothingEnabled { get; set; }
     public double SmoothingTau { get; set; } = 0.03;
     public double MinConfidence { get; set; } = 0.1;
-    public double PositionScale { get; set; } = 1.0;
+    public OriginOptions Origin { get; set; } = new();
+    public LensProject Lens { get; set; } = new();
+    // UE Lens File 应用 nodal offset 时，Bridge 跳过安装平移/旋转，避免重复补偿。
+    public bool NodalOffsetInUe { get; set; }
 
     // ---- 运行 ----
     public bool AutoConnect { get; set; }
     public bool AutoSend { get; set; }
+    public string DeviceSerialNumber { get; set; } = "";
+    public int DeviceDataVersion { get; set; }
 
     public static string SettingsPath
     {
@@ -63,14 +74,25 @@ public sealed class AppSettings
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static AppSettings Load()
+    public static AppSettings Load() => LoadFrom(SettingsPath);
+
+    /// <summary>从指定文件读取；旧版本配置会就地迁移。</summary>
+    public static AppSettings LoadFrom(string path)
     {
         try
         {
-            if (File.Exists(SettingsPath))
+            if (File.Exists(path))
             {
-                string json = File.ReadAllText(SettingsPath);
-                return JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
+                string json = File.ReadAllText(path);
+                var settings = JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
+                settings.Origin ??= new();
+                settings.Lens ??= new();
+                if (settings.SettingsVersion < CurrentVersion)
+                {
+                    settings.Migrate();
+                    settings.SaveTo(path);
+                }
+                return settings;
             }
         }
         catch
@@ -81,11 +103,30 @@ public sealed class AppSettings
         return new AppSettings();
     }
 
-    public void Save()
+    /// <summary>
+    /// v0.2.x → v0.3.0：
+    /// - 厂商 C 封装返回毫米且把 X/Y/Z 取反，本版改为 XVSDK 原生米制 Pose；
+    /// - 旧默认“Y 上 / Z 后”是猜测值，改为 XVSDK 文档坐标系（Y 下 / Z 前）。
+    /// 用户手选的 ROS 等其他预设保持不变。
+    /// </summary>
+    private void Migrate()
+    {
+        if (SettingsVersion < 2)
+        {
+            if (SourceFrame == SourceFramePreset.RightHandedYUpZBack)
+                SourceFrame = SourceFramePreset.XvisioXRightYDownZForward;
+            SettingsVersion = 2;
+        }
+    }
+
+    public void Save() => SaveTo(SettingsPath);
+
+    public void SaveTo(string path)
     {
         try
         {
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, Options));
+            SettingsVersion = CurrentVersion;
+            File.WriteAllText(path, JsonSerializer.Serialize(this, Options));
         }
         catch
         {

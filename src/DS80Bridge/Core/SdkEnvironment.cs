@@ -34,8 +34,8 @@ public static class SdkEnvironment
         foreach (string dir in candidates)
         {
             if (string.IsNullOrWhiteSpace(dir)) continue;
-            string wrapper = Path.Combine(dir, XvisioNative.DllName);
-            if (File.Exists(wrapper)) return dir;
+            string sdk = Path.Combine(dir, "xvsdk.dll");
+            if (File.Exists(sdk)) return dir;
         }
 
         return null;
@@ -53,7 +53,7 @@ public static class SdkEnvironment
         string? dir = LocateBinDirectory();
         if (dir == null)
         {
-            message = "未找到 " + XvisioNative.DllName +
+            message = "未找到 xvsdk.dll" +
                       "。请安装 Xvisio XVSDK，或设置环境变量 XVSDK_BIN 指向 SDK 的 bin 目录。";
             LastError = message;
             return false;
@@ -66,8 +66,12 @@ public static class SdkEnvironment
                 // 非致命：某些环境下会被策略禁止，继续尝试直接加载。
             }
 
-            string wrapper = Path.Combine(dir, XvisioNative.DllName);
+            string wrapper = Path.Combine(AppContext.BaseDirectory, XvisioNative.DllName);
+            if (!File.Exists(wrapper))
+                throw new FileNotFoundException("缺少 DS80NativeBridge.dll，请运行 native/build.cmd 后重新构建。", wrapper);
             NativeLibrary.Load(wrapper);
+            if (XvisioNative.ds80_abi_version() != 1 || XvisioNative.ds80_pose_size() != Marshal.SizeOf<SdkPose>())
+                throw new InvalidOperationException("原生 SDK 桥接 ABI 不匹配，请重新构建发布包。");
 
             BinDirectory = dir;
             WrapperPath = wrapper;
@@ -76,7 +80,7 @@ public static class SdkEnvironment
             return true;
         }
         catch (Exception ex) when (ex is DllNotFoundException or BadImageFormatException
-                                       or EntryPointNotFoundException or IOException)
+                                       or EntryPointNotFoundException or IOException or InvalidOperationException)
         {
             message = $"加载 {XvisioNative.DllName} 失败: {ex.Message}";
             LastError = message;

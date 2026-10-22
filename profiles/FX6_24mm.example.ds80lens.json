@@ -1,0 +1,20 @@
+{
+  "Version": 1,
+  "ProjectName": "FX6 24mm 示例（画幅待核对）",
+  "UnrealVersion": "5.8",
+  "AssetPath": "/Game/Calibration/FX6_GM24_ProjectA",
+  "CameraModel": "Sony FX6",
+  "LensModel": "24-70 G Master",
+  "SerialNumber": "",
+  "Model": 0,
+  "SqueezeFactor": 1,
+  "FocalLengthMm": 24,
+  "FocusDistanceCm": 100,
+  "SensorWidthMm": 35.7,
+  "SensorHeightMm": 0,
+  "ImageWidth": 3840,
+  "ImageHeight": 2160,
+  "FilmbackConfirmed": false,
+  "NodalOffsetInUe": true,
+  "Notes": "示例不是标定结果。有效高度、分辨率、对焦距离需按项目填写。相机/镜头/焦距均可修改。"
+}

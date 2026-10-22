@@ -14,6 +14,12 @@ public sealed class TrackerEngine : IDisposable
     [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
     private static extern uint TimeEndPeriod(uint uPeriod);
 
+    public const int TargetPoseRateHz = PoseTiming.RateHz;
+    // 超采样减少设备与主机时钟相位抖动导致的漏帧，重复帧不计入 Pose 频率。
+    public int TargetReadRateHz => _source?.SuggestedReadRateHz ?? TargetPoseRateHz * 2;
+
+    private readonly object _lifecycleLock = new();
+    private readonly object _pipelineLock = new();
     private readonly object _frameLock = new();
     private readonly object _rateLock = new();
     private readonly TrackerPipeline _pipeline = new();
@@ -21,6 +27,9 @@ public sealed class TrackerEngine : IDisposable
 
     private Thread? _thread;
     private volatile bool _running;
+    private bool _disposed;
+    private OriginCalibration? _origin;
+    public OriginCalibration? CurrentOrigin { get { lock (_pipelineLock) return _origin; } }
     private IPoseSource? _source;
     private TrackedFrame _latest = TrackedFrame.Empty;
 
@@ -57,62 +66,134 @@ public sealed class TrackerEngine : IDisposable
         get { lock (_frameLock) return _latest; }
     }
 
+    /// <summary>最近一帧 SDK 原始位姿（设备坐标系，米），用于诊断对照。</summary>
+    public PoseSample LastRawSample
+    {
+        get { lock (_frameLock) return _lastRawSample; }
+    }
+
     public bool Start(IPoseSource source, out string message)
     {
-        if (_running)
+        lock (_lifecycleLock)
         {
-            message = "跟踪已在运行";
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_running)
+            {
+                message = "跟踪已在运行";
+                return true;
+            }
+
+            if (!ReferenceEquals(_source, source)) _source?.Dispose();
+            _source = source;
+            _pipeline.Settings = Settings;
+            _udp.Configure(Settings.TargetIp, Settings.FreedPort, Settings.JsonPort);
+
+            if (!source.IsConnected)
+            {
+                if (!source.Connect(out message)) return false;
+            }
+            else
+            {
+                message = "数据源已连接";
+            }
+
+            lock (_frameLock)
+            {
+                _lastRawSample = PoseSample.Invalid;
+                _latest = TrackedFrame.Empty;
+            }
+            lock (_rateLock)
+            {
+                _readCount = _poseCountTracker = 0;
+                _poseRate = _readRate = _rateWindowStart = 0;
+            }
+            _lastSendTime = double.NegativeInfinity;
+            ClearOrigin();
+            _running = true;
+            TimeBeginPeriod(1);
+            _thread = new Thread(Run) { IsBackground = true, Name = "DS80 tracking loop", Priority = ThreadPriority.AboveNormal };
+            _thread.Start();
+
+            Log?.Invoke($"跟踪已启动，Pose 目标 {TargetPoseRateHz} Hz，读取 {TargetReadRateHz} Hz，数据源: {source.Name}");
             return true;
         }
-
-        _source = source;
-        _pipeline.Settings = Settings;
-        _udp.Configure(Settings.TargetIp, Settings.FreedPort, Settings.JsonPort);
-
-        if (!source.IsConnected)
-        {
-            if (!source.Connect(out message)) return false;
-        }
-        else
-        {
-            message = "数据源已连接";
-        }
-
-        _running = true;
-        TimeBeginPeriod(1);
-        _thread = new Thread(Run) { IsBackground = true, Name = "DS80 tracking loop", Priority = ThreadPriority.AboveNormal };
-        _thread.Start();
-
-        Log?.Invoke($"跟踪已启动，数据源: {source.Name}");
-        return true;
     }
 
     public void Stop()
     {
-        if (!_running) return;
-        _running = false;
-        _thread?.Join(1000);
-        _thread = null;
+        lock (_lifecycleLock)
+        {
+            if (!_running) return;
+            _running = false;
+            // 必须等待读取结束，避免 SDK 仍在读取时卸载设备。
+            _thread?.Join();
+            _thread = null;
+            try { _source?.Disconnect(); } catch { }
+            TimeEndPeriod(1);
+            lock (_rateLock) _poseRate = _readRate = 0;
+            lock (_frameLock)
+            {
+                _lastRawSample = PoseSample.Invalid;
+                _latest = TrackedFrame.Empty;
+            }
+            Log?.Invoke("跟踪已停止");
+        }
+    }
 
-        try { _source?.Disconnect(); } catch { }
+    public void ClearOrigin()
+    {
+        lock (_pipelineLock)
+        {
+            _pipeline.ClearOrigin();
+            _origin = null;
+        }
+    }
 
-        TimeEndPeriod(1);
-        Log?.Invoke("跟踪已停止");
+    public void LoadOrigin(string path)
+    {
+        var origin = OriginCalibration.Load(path);
+        if (!_running || origin.Source != _source?.Name)
+            throw new InvalidOperationException("请先连接与原点文件一致的数据源。");
+        if (origin.CoordinateSignature != OriginCalibration.Signature(Settings))
+            throw new InvalidOperationException("原点文件的坐标系、安装偏移或轴向设置与当前项目不一致，请重新定位原点。");
+        lock (_pipelineLock)
+        {
+            _pipeline.SetOrigin(origin.Reference, origin.Target);
+            _origin = origin;
+        }
+        Log?.Invoke("已加载原点：" + origin.Target.Name);
     }
 
     public void ResetOrigin()
     {
         PoseSample sample;
-        lock (_frameLock) sample = _lastRawSample;
-
-        if (!sample.HasPose)
+        bool fresh;
+        lock (_frameLock)
         {
-            Log?.Invoke("重置原点失败：当前没有有效 Pose");
+            sample = _lastRawSample;
+            fresh = _latest.Valid && _latest.DataAgeMs <= 100;
+        }
+
+        if (!_running || !sample.HasPose || !fresh)
+        {
+            Log?.Invoke("定位原点失败：需要置信度达标且年龄不超过 100 ms 的 Pose");
             return;
         }
 
-        _pipeline.SetOrigin(sample);
-        Log?.Invoke("原点已重置：位置归零，航向归零");
+        try
+        {
+            var target = System.Text.Json.JsonSerializer.Deserialize<OriginOptions>(
+                System.Text.Json.JsonSerializer.Serialize(Settings.Origin))!;
+            target.Validate();
+            lock (_pipelineLock)
+            {
+                _pipeline.SetOrigin(sample, target);
+                _origin = new OriginCalibration { Source = _source!.Name, Reference = sample,
+                    Target = target, CoordinateSignature = OriginCalibration.Signature(Settings) };
+            }
+            Log?.Invoke($"原点已定位：{target.Name}，目标 ({target.X:F3}, {target.Y:F3}, {target.Z:F3}) m / {target.Pan:F1}°");
+        }
+        catch (Exception ex) { Log?.Invoke("定位原点失败：" + ex.Message); }
     }
 
     private PoseSample _lastRawSample;
@@ -120,10 +201,12 @@ public sealed class TrackerEngine : IDisposable
     private void Run()
     {
         var sw = Stopwatch.StartNew();
-        double lastNewDataTime = 0;
+        double lastNewDataTime = double.NaN;
         long sequence = 0;
         _rateWindowStart = 0;
 
+        using var timing = new PoseTiming(TargetReadRateHz);
+        Func<bool> keepRunning = () => _running;
         while (_running)
         {
             double now = sw.Elapsed.TotalSeconds;
@@ -131,21 +214,32 @@ public sealed class TrackerEngine : IDisposable
             bool gotNew = false;
             try
             {
-                gotNew = _source!.TryRead(out PoseSample sample);
+                gotNew = _source!.TryRead(out PoseSample sample) && sample.HasPose;
+                now = sw.Elapsed.TotalSeconds;
                 if (gotNew && sample.HasPose)
                 {
                     lock (_frameLock) _lastRawSample = sample;
                     lastNewDataTime = now;
                     sequence++;
                 }
-                else if (!sample.HasPose)
+                else
                 {
                     lock (_frameLock) sample = _lastRawSample;
                 }
 
-                double ageMs = lastNewDataTime > 0 ? (now - lastNewDataTime) * 1000.0 : double.PositiveInfinity;
+                double ageMs = !double.IsNaN(lastNewDataTime) ? (now - lastNewDataTime) * 1000.0 : double.PositiveInfinity;
 
-                var frame = _pipeline.Process(sample, sequence, now, ageMs);
+                TrackedFrame frame;
+                lock (_pipelineLock)
+                {
+                    if (_origin != null && _origin.CoordinateSignature != OriginCalibration.Signature(Settings))
+                    {
+                        _pipeline.ClearOrigin();
+                        _origin = null;
+                        Log?.Invoke("坐标或安装参数已改变，请重新定位原点。");
+                    }
+                    frame = _pipeline.Process(sample, sequence, now, ageMs);
+                }
                 lock (_frameLock) _latest = frame;
 
                 // 有新帧就发；没有新帧时以 10Hz 发送“保持帧”，避免 UE 端因超时丢失 Subject
@@ -161,11 +255,12 @@ public sealed class TrackerEngine : IDisposable
             catch (Exception ex)
             {
                 Log?.Invoke("跟踪循环异常: " + ex.Message);
+                gotNew = false;
                 Thread.Sleep(50);
             }
 
             UpdateRate(now, gotNew);
-            Thread.Sleep(2);
+            timing.WaitNext(keepRunning);
         }
     }
 
@@ -192,9 +287,14 @@ public sealed class TrackerEngine : IDisposable
 
     public void Dispose()
     {
-        Stop();
-        _udp.Dispose();
-        _source?.Dispose();
+        lock (_lifecycleLock)
+        {
+            if (_disposed) return;
+            Stop();
+            _udp.Dispose();
+            _source?.Dispose();
+            _disposed = true;
+        }
     }
 }
 

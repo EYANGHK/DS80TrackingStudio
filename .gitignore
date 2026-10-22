@@ -4,3 +4,11 @@ dist/
 *.user
 diag.txt
 .vs/
+artifacts/
+__pycache__/
+*.pyc
+
+# Xvisio SDK 运行产物
+*.xvcd
+xvlog/
+native/bin/

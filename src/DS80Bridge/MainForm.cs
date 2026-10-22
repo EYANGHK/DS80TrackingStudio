@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Globalization;
+using System.Text;
 using System.Windows.Forms;
 using DS80Bridge.Core;
 
@@ -25,6 +26,8 @@ public sealed class MainForm : Form
 
     private RadioButton _rbSim = null!;
     private RadioButton _rbDevice = null!;
+    private ComboBox _deviceCombo = null!;
+    private Button _btnRefresh = null!;
     private Button _btnConnect = null!;
     private Label _sdkLabel = null!;
     private Label _devStatus = null!;
@@ -44,16 +47,19 @@ public sealed class MainForm : Form
     private NumericUpDown _freedPort = null!, _jsonPort = null!, _cameraId = null!;
     private CheckBox _sendFreeD = null!, _sendJson = null!;
     private ComboBox _frameCombo = null!;
-    private ComboBox _unitCombo = null!;
     private CheckBox _invX = null!, _invY = null!, _invZ = null!, _invPan = null!, _invTilt = null!, _invRoll = null!;
     private NumericUpDown _mountX = null!, _mountY = null!, _mountZ = null!;
     private NumericUpDown _mountYaw = null!, _mountPitch = null!, _mountRoll = null!;
     private CheckBox _smooth = null!;
     private NumericUpDown _smoothTau = null!;
     private RichTextBox _log = null!;
+    private TextBox _diagBox = null!;
     private Button _btnOrigin = null!;
+    private Label _calibrationStatus = null!;
     private bool _suppressEvents;
     private readonly bool _preferSimulator;
+    private Task? _deviceScan;
+    private int _diagTick;
 
     public MainForm()
         : this(false)
@@ -207,34 +213,60 @@ public sealed class MainForm : Form
             AutoScroll = true,
         };
 
-        var deviceBox = MakeCard("设备", 196);
+        var deviceBox = MakeCard("设备", 214);
         _rbSim = new RadioButton
         {
             Text = "模拟器（无硬件，验证数据链路）",
             ForeColor = TextMain,
             Checked = true,
-            Location = new Point(14, 28),
+            Location = new Point(14, 26),
             AutoSize = true,
             BackColor = Color.Transparent,
         };
         _rbDevice = new RadioButton
         {
-            Text = "DS80 硬件（USB）",
+            Text = "Xvisio 硬件（USB / S80 / DS80）",
             ForeColor = TextMain,
-            Location = new Point(14, 52),
+            Location = new Point(14, 50),
             AutoSize = true,
             BackColor = Color.Transparent,
         };
+        _deviceCombo = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Location = new Point(14, 74),
+            Width = 184,
+            BackColor = CardBg,
+            ForeColor = TextMain,
+            FlatStyle = FlatStyle.Flat,
+        };
+        _deviceCombo.Items.Add("（点刷新搜索设备）");
+        _deviceCombo.SelectedIndex = 0;
+        _deviceCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_suppressEvents) return;
+            string? serial = SelectedSerial();
+            if (!string.IsNullOrEmpty(serial))
+            {
+                _settings.DeviceSerialNumber = serial;
+                QueueSave();
+            }
+        };
+        _btnRefresh = MakeButton("刷新", 204, 73, 70, Color.FromArgb(90, 98, 116));
+        _btnRefresh.Height = 25;
+        _btnRefresh.Click += (_, _) => BeginRefreshDevices();
+
         _sdkLabel = new Label
         {
             Text = "SDK: 检测中…",
             ForeColor = TextMuted,
-            Location = new Point(14, 80),
+            Location = new Point(14, 102),
             Size = new Size(258, 20),
             AutoEllipsis = true,
             BackColor = Color.Transparent,
         };
-        _btnConnect = MakeButton("连接", 14, 100, 258, Accent);
+        _btnConnect = MakeButton("连接", 14, 124, 258, Accent);
+        _btnConnect.Height = 28;
         _btnConnect.Click += (_, _) => ToggleConnect();
 
         _devStatus = new Label
@@ -242,29 +274,43 @@ public sealed class MainForm : Form
             Text = "未连接",
             AutoEllipsis = true,
             ForeColor = TextMuted,
-            Location = new Point(14, 136),
-            Size = new Size(258, 44),
+            Location = new Point(14, 156),
+            Size = new Size(258, 52),
             BackColor = Color.Transparent,
         };
-        deviceBox.Controls.AddRange(new Control[] { _rbSim, _rbDevice, _sdkLabel, _btnConnect, _devStatus });
+        deviceBox.Controls.AddRange(new Control[] { _rbSim, _rbDevice, _deviceCombo, _btnRefresh, _sdkLabel, _btnConnect, _devStatus });
         stack.Controls.Add(deviceBox);
 
-        var statsBox = MakeCard("运行状态", 186);
-        _poseRateValue = MakeStat(statsBox, "Pose 频率", "-- Hz", 26);
-        _readRateValue = MakeStat(statsBox, "读取频率", "-- Hz", 62);
-        _ageValue = MakeStat(statsBox, "数据年龄", "-- ms", 98);
-        _confValue = MakeStat(statsBox, "置信度", "--", 134);
+        var statsBox = MakeCard("运行状态 · 目标 500 Hz", 176);
+        _poseRateValue = MakeStat(statsBox, "Pose 频率", "-- Hz", 24);
+        _readRateValue = MakeStat(statsBox, "读取频率", "-- Hz", 58);
+        _ageValue = MakeStat(statsBox, "数据年龄", "-- ms", 92);
+        _confValue = MakeStat(statsBox, "置信度", "--", 126);
 
         _confBar = new Panel
         {
-            Location = new Point(112, 138),
-            Size = new Size(150, 8),
+            Location = new Point(14, 150),
+            Size = new Size(248, 6),
             BackColor = Color.FromArgb(45, 50, 64),
         };
-        _confBarFill = new Panel { Location = new Point(0, 0), Size = new Size(0, 8), BackColor = Good };
+        _confBarFill = new Panel { Location = new Point(0, 0), Size = new Size(0, 6), BackColor = Good };
         _confBar.Controls.Add(_confBarFill);
         statsBox.Controls.Add(_confBar);
         stack.Controls.Add(statsBox);
+
+        var projectBox = MakeCard("项目校准", 126);
+        var projectButton = MakeButton("定位原点 / UE Lens File…", 14, 30, 258, Accent);
+        projectButton.Height = 28;
+        projectButton.Click += (_, _) =>
+        {
+            using var dialog = new CalibrationForm(_engine, _settings);
+            dialog.ShowDialog(this);
+        };
+        _calibrationStatus = new Label { Location = new Point(14, 66), Size = new Size(258, 56),
+            ForeColor = TextMuted, AutoEllipsis = true };
+        projectBox.Controls.Add(projectButton);
+        projectBox.Controls.Add(_calibrationStatus);
+        stack.Controls.Add(projectBox);
 
         outer.Controls.Add(stack);
         return outer;
@@ -369,15 +415,16 @@ public sealed class MainForm : Form
         _cameraId = MakeNumeric(outputBox, "Free-D Camera ID", _settings.CameraId, 174, 0, 255, 0);
         stack.Controls.Add(outputBox);
 
-        var calibBox = MakeCard("标定", 402);
-        _btnOrigin = MakeButton("重置原点  (R)", 14, 28, 180, Color.FromArgb(0, 150, 136));
+        var calibBox = MakeCard("标定", 380);
+        _btnOrigin = MakeButton("定位原点  (R)", 14, 28, 180, Color.FromArgb(0, 150, 136));
         _btnOrigin.Click += (_, _) => _engine.ResetOrigin();
         var originHint = new Label
         {
-            Text = "当前位置 = 0，当前航向 = 0°",
+            Text = "目标见项目校准",
             ForeColor = TextMuted,
             Location = new Point(200, 34),
-            AutoSize = true,
+            Size = new Size(100, 18),
+            AutoEllipsis = true,
             BackColor = Color.Transparent,
         };
 
@@ -394,46 +441,26 @@ public sealed class MainForm : Form
             DropDownStyle = ComboBoxStyle.DropDownList,
             Location = new Point(120, 54),
             Width = 200,
+            DropDownWidth = 280,
             BackColor = CardBg,
             ForeColor = TextMain,
             FlatStyle = FlatStyle.Flat,
         };
         _frameCombo.Items.AddRange(new object[]
         {
-            "X 右 / Y 上 / Z 后（右手）",
-            "X 前 / Y 左 / Z 上（ROS）",
+            "XVSDK · X 右 / Y 下 / Z 前",
+            "ROS · X 前 / Y 左 / Z 上",
+            "右手 · Y 上 / Z 后",
         });
         _frameCombo.SelectedIndexChanged += (_, _) =>
         {
             if (_suppressEvents) return;
-            _settings.SourceFrame = _frameCombo.SelectedIndex == 1
-                ? SourceFramePreset.RosXForwardYLeftZUp
-                : SourceFramePreset.RightHandedYUpZBack;
-            QueueSave();
-        };
-
-        var unitLabel = new Label
-        {
-            Text = "位置单位",
-            ForeColor = TextMuted,
-            Location = new Point(14, 86),
-            AutoSize = true,
-            BackColor = Color.Transparent,
-        };
-        _unitCombo = new ComboBox
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Location = new Point(120, 82),
-            Width = 200,
-            BackColor = CardBg,
-            ForeColor = TextMain,
-            FlatStyle = FlatStyle.Flat,
-        };
-        _unitCombo.Items.AddRange(new object[] { "米 (m)", "毫米 (mm)" });
-        _unitCombo.SelectedIndexChanged += (_, _) =>
-        {
-            if (_suppressEvents) return;
-            _settings.PositionScale = _unitCombo.SelectedIndex == 1 ? 0.001 : 1.0;
+            _settings.SourceFrame = _frameCombo.SelectedIndex switch
+            {
+                1 => SourceFramePreset.RosXForwardYLeftZUp,
+                2 => SourceFramePreset.RightHandedYUpZBack,
+                _ => SourceFramePreset.XvisioXRightYDownZForward,
+            };
             QueueSave();
         };
 
@@ -441,37 +468,37 @@ public sealed class MainForm : Form
         {
             Text = "方向校正（现场标定用）",
             ForeColor = TextMuted,
-            Location = new Point(14, 110),
+            Location = new Point(14, 86),
             AutoSize = true,
             BackColor = Color.Transparent,
         };
-        _invX = MakeMiniCheck(calibBox, "X", 14, 132);
-        _invY = MakeMiniCheck(calibBox, "Y", 74, 132);
-        _invZ = MakeMiniCheck(calibBox, "Z", 134, 132);
-        _invPan = MakeMiniCheck(calibBox, "Pan", 194, 132);
-        _invTilt = MakeMiniCheck(calibBox, "Tilt", 248, 132);
-        _invRoll = MakeMiniCheck(calibBox, "Roll", 302, 132);
+        _invX = MakeMiniCheck(calibBox, "X", 14, 108);
+        _invY = MakeMiniCheck(calibBox, "Y", 58, 108);
+        _invZ = MakeMiniCheck(calibBox, "Z", 98, 108);
+        _invPan = MakeMiniCheck(calibBox, "Pan", 146, 108);
+        _invTilt = MakeMiniCheck(calibBox, "Tilt", 200, 108);
+        _invRoll = MakeMiniCheck(calibBox, "Roll", 252, 108);
 
-        _mountX = MakeNumeric(calibBox, "安装偏移 X (mm)", (decimal)_settings.MountXmm, 156, -5000, 5000, 0, 142);
-        _mountY = MakeNumeric(calibBox, "安装偏移 Y (mm)", (decimal)_settings.MountYmm, 182, -5000, 5000, 0, 142);
-        _mountZ = MakeNumeric(calibBox, "安装偏移 Z (mm)", (decimal)_settings.MountZmm, 208, -5000, 5000, 0, 142);
-        _mountYaw = MakeNumeric(calibBox, "安装旋转 Yaw (°)", (decimal)_settings.MountYawDeg, 234, -180, 180, 2, 142);
-        _mountPitch = MakeNumeric(calibBox, "安装旋转 Pitch (°)", (decimal)_settings.MountPitchDeg, 260, -90, 90, 2, 142);
-        _mountRoll = MakeNumeric(calibBox, "安装旋转 Roll (°)", (decimal)_settings.MountRollDeg, 286, -180, 180, 2, 142);
+        _mountX = MakeNumeric(calibBox, "安装偏移 X (mm)", (decimal)_settings.MountXmm, 132, -5000, 5000, 0, 142);
+        _mountY = MakeNumeric(calibBox, "安装偏移 Y (mm)", (decimal)_settings.MountYmm, 158, -5000, 5000, 0, 142);
+        _mountZ = MakeNumeric(calibBox, "安装偏移 Z (mm)", (decimal)_settings.MountZmm, 184, -5000, 5000, 0, 142);
+        _mountYaw = MakeNumeric(calibBox, "安装旋转 Yaw (°)", (decimal)_settings.MountYawDeg, 210, -180, 180, 2, 142);
+        _mountPitch = MakeNumeric(calibBox, "安装旋转 Pitch (°)", (decimal)_settings.MountPitchDeg, 236, -90, 90, 2, 142);
+        _mountRoll = MakeNumeric(calibBox, "安装旋转 Roll (°)", (decimal)_settings.MountRollDeg, 262, -180, 180, 2, 142);
 
-        _smooth = MakeCheck(calibBox, "启用平滑滤波", _settings.SmoothingEnabled, 312);
-        _smoothTau = MakeNumeric(calibBox, "时间常数 (s)", (decimal)_settings.SmoothingTau, 336, 0.001m, 1m, 3, 142);
+        _smooth = MakeCheck(calibBox, "启用平滑滤波", _settings.SmoothingEnabled, 288);
+        _smoothTau = MakeNumeric(calibBox, "时间常数 (s)", (decimal)_settings.SmoothingTau, 312, 0.001m, 1m, 3, 142);
 
-        var resetCalib = MakeButton("清除原点标定", 14, 366, 180, Color.FromArgb(90, 98, 116));
+        var resetCalib = MakeButton("清除原点标定", 14, 336, 180, Color.FromArgb(90, 98, 116));
         resetCalib.Click += (_, _) =>
         {
-            _engine.Pipeline.ClearOrigin();
+            _engine.ClearOrigin();
             AppendLog("原点标定已清除（输出回到设备原始坐标）");
         };
 
         calibBox.Controls.AddRange(new Control[]
         {
-            _btnOrigin, originHint, frameLabel, _frameCombo, unitLabel, _unitCombo, invertLabel,
+            _btnOrigin, originHint, frameLabel, _frameCombo, invertLabel,
             _invX, _invY, _invZ, _invPan, _invTilt, _invRoll,
             _mountX, _mountY, _mountZ, _mountYaw, _mountPitch, _mountRoll,
             _smooth, _smoothTau, resetCalib,
@@ -482,13 +509,12 @@ public sealed class MainForm : Form
         // 右侧改用选项卡：在 1080p / 125% 缩放下也能完整显示
         outputBox.Dock = DockStyle.Top;
         calibBox.Dock = DockStyle.Top;
-        calibBox.AutoScroll = true;
 
         var tabs = new TabControl
         {
             Dock = DockStyle.Fill,
             Appearance = TabAppearance.FlatButtons,
-            ItemSize = new Size(88, 28),
+            ItemSize = new Size(74, 28),
             SizeMode = TabSizeMode.Fixed,
             Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
             DrawMode = TabDrawMode.OwnerDrawFixed,
@@ -496,11 +522,14 @@ public sealed class MainForm : Form
         };
 
         var pageOutput = new TabPage("输出") { BackColor = PanelBg };
-        var pageCalib = new TabPage("标定") { BackColor = PanelBg, AutoScroll = true };
+        var pageCalib = new TabPage("标定") { BackColor = PanelBg };
+        var pageDiag = new TabPage("诊断") { BackColor = PanelBg };
         pageOutput.Controls.Add(outputBox);
         pageCalib.Controls.Add(calibBox);
+        pageDiag.Controls.Add(BuildDiagnosticsPage());
         tabs.TabPages.Add(pageOutput);
         tabs.TabPages.Add(pageCalib);
+        tabs.TabPages.Add(pageDiag);
 
         tabs.DrawItem += (_, e) =>
         {
@@ -517,6 +546,45 @@ public sealed class MainForm : Form
 
         outer.Controls.Add(tabs);
         return outer;
+    }
+
+    /// <summary>SDK 原始值与转换结果并排显示，便于和官方 xvsdk-viewer 对照。</summary>
+    private Control BuildDiagnosticsPage()
+    {
+        var page = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = PanelBg,
+            Padding = new Padding(8),
+        };
+        page.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        page.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+
+        _diagBox = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            WordWrap = true,
+            BackColor = Color.FromArgb(20, 22, 29),
+            ForeColor = TextMain,
+            BorderStyle = BorderStyle.None,
+            Font = new Font("Consolas", 9f),
+            Text = "未连接。",
+        };
+        var hint = new Label
+        {
+            Dock = DockStyle.Fill,
+            ForeColor = TextMuted,
+            Text = "上方 SDK 原始值，下方转换后的 Free-D 值，可与官方 viewer 对照。\n" +
+                   "右摇 → Pan 增大；抬头 → Tilt 增大；右倾 → Roll 增大。",
+        };
+        page.Controls.Add(_diagBox, 0, 0);
+        page.Controls.Add(hint, 0, 1);
+        return page;
     }
 
     private Control BuildLogPanel()
@@ -542,7 +610,7 @@ public sealed class MainForm : Form
     {
         var card = new Panel
         {
-            Width = 288,
+            Width = 276,
             Height = height,
             BackColor = PanelBg,
             Margin = new Padding(0, 0, 0, 10),
@@ -749,8 +817,12 @@ public sealed class MainForm : Form
         _cameraId.Value = _settings.CameraId;
         _sendFreeD.Checked = _settings.SendFreeD;
         _sendJson.Checked = _settings.SendJson;
-        _frameCombo.SelectedIndex = _settings.SourceFrame == SourceFramePreset.RosXForwardYLeftZUp ? 1 : 0;
-        _unitCombo.SelectedIndex = _settings.PositionScale < 0.01 ? 1 : 0;
+        _frameCombo.SelectedIndex = _settings.SourceFrame switch
+        {
+            SourceFramePreset.RosXForwardYLeftZUp => 1,
+            SourceFramePreset.RightHandedYUpZBack => 2,
+            _ => 0,
+        };
         _invX.Checked = _settings.InvertX;
         _invY.Checked = _settings.InvertY;
         _invZ.Checked = _settings.InvertZ;
@@ -790,7 +862,11 @@ public sealed class MainForm : Form
         _smooth.CheckedChanged += (_, _) => { _settings.SmoothingEnabled = _smooth.Checked; QueueSave(); };
         _smoothTau.ValueChanged += (_, _) => { _settings.SmoothingTau = (double)_smoothTau.Value; QueueSave(); };
 
-        _rbDevice.CheckedChanged += (_, _) => RefreshSdkStatus();
+        _rbDevice.CheckedChanged += (_, _) =>
+        {
+            RefreshSdkStatus();
+            if (_rbDevice.Checked) BeginRefreshDevices();
+        };
     }
 
     private void QueueSave()
@@ -808,12 +884,78 @@ public sealed class MainForm : Form
         if (!_engine.IsRunning) ToggleConnect();
     }
 
-    /// <summary>命令行 --device 启动时调用：直接尝试连接 DS80。</summary>
+    /// <summary>命令行 --device 启动时调用：直接尝试连接 Xvisio。</summary>
     public void StartDevice()
     {
         _rbDevice.Checked = true;
         RefreshSdkStatus();
+        BeginRefreshDevices();
         if (!_engine.IsRunning) ToggleConnect();
+    }
+
+    /// <summary>下拉框里的真实序列号；占位文字不算。</summary>
+    private string SelectedSerial()
+    {
+        if (_deviceCombo.SelectedItem is string text && text.Length >= 8 &&
+            !text.StartsWith('（') && !text.StartsWith("正在") &&
+            !text.StartsWith("未找到") && !text.StartsWith("搜索"))
+            return text;
+        return _settings.DeviceSerialNumber ?? "";
+    }
+
+    private void BeginRefreshDevices()
+    {
+        if (_engine.IsRunning) return;
+        if (_deviceScan is { IsCompleted: false }) return;
+        _deviceScan = RefreshDevicesAsync();
+    }
+
+    /// <summary>枚举 USB 上的 Xvisio 设备。两台以上时必须显式选序列号。</summary>
+    private async Task RefreshDevicesAsync()
+    {
+        _btnRefresh.Enabled = false;
+        _deviceCombo.Enabled = false;
+        _deviceCombo.Items.Clear();
+        _deviceCombo.Items.Add("正在搜索…");
+        _deviceCombo.SelectedIndex = 0;
+        try
+        {
+            string[] serials = await Task.Run(XvisioPoseSource.EnumerateDevices);
+            if (IsDisposed || Disposing) return;
+
+            _deviceCombo.Items.Clear();
+            if (serials.Length == 0)
+            {
+                _deviceCombo.Items.Add("未找到设备");
+                _deviceCombo.SelectedIndex = 0;
+                AppendLog("未找到 Xvisio 设备：检查 USB 连接，并关闭官方 xvsdk-viewer。");
+            }
+            else
+            {
+                foreach (string serial in serials) _deviceCombo.Items.Add(serial);
+                int index = Array.IndexOf(serials, _settings.DeviceSerialNumber);
+                _deviceCombo.SelectedIndex = index >= 0 ? index : 0;
+                _settings.DeviceSerialNumber = serials[Math.Max(index, 0)];
+                QueueSave();
+                AppendLog($"发现 {serials.Length} 台 Xvisio 设备：" + string.Join("，", serials));
+            }
+        }
+        catch (Exception ex)
+        {
+            if (IsDisposed || Disposing) return;
+            _deviceCombo.Items.Clear();
+            _deviceCombo.Items.Add("搜索失败");
+            _deviceCombo.SelectedIndex = 0;
+            AppendLog("搜索设备失败: " + ex.Message);
+        }
+        finally
+        {
+            if (!IsDisposed && !Disposing)
+            {
+                _btnRefresh.Enabled = true;
+                _deviceCombo.Enabled = true;
+            }
+        }
     }
 
     private async void ToggleConnect()
@@ -832,22 +974,49 @@ public sealed class MainForm : Form
         _statusPill.Text = "● 正在连接";
         _statusPill.ForeColor = Warn;
         _devStatus.Text = _rbDevice.Checked
-            ? "正在初始化 SDK 并搜索 DS80（最长约 10 秒）…"
+            ? "正在初始化 SDK 并搜索 Xvisio 设备（最长约 10 秒）…"
             : "正在启动模拟器…";
         _devStatus.ForeColor = TextMuted;
 
-        IPoseSource source = _rbDevice.Checked
-            ? new XvisioPoseSource()
-            : new SimulatorPoseSource { FramePreset = _settings.SourceFrame };
-
-        var result = await Task.Run(() =>
+        IPoseSource source;
+        if (_rbDevice.Checked)
         {
-            bool started = _engine.Start(source, out string msg);
-            return (started, msg);
-        });
+            if (_deviceScan is { IsCompleted: false })
+            {
+                _devStatus.Text = "正在搜索 Xvisio 设备…";
+                try { await _deviceScan; } catch { }
+            }
+            if (IsDisposed || Disposing) { _connecting = false; return; }
+
+            string serial = SelectedSerial();
+            _settings.DeviceSerialNumber = serial;
+            _devStatus.Text = string.IsNullOrEmpty(serial)
+                ? "正在初始化 SDK 并搜索 Xvisio 设备（最长约 10 秒）…"
+                : "正在连接 " + serial + "…";
+            source = new XvisioPoseSource(serial);
+        }
+        else
+        {
+            source = new SimulatorPoseSource { FramePreset = _settings.SourceFrame };
+        }
+
+        (bool started, string msg) result;
+        try
+        {
+            result = await Task.Run(() =>
+            {
+                bool started = _engine.Start(source, out string msg);
+                return (started, msg);
+            });
+        }
+        catch (Exception ex)
+        {
+            source.Dispose();
+            result = (false, ex.Message);
+        }
 
         _connecting = false;
-        if (IsDisposed) return;
+        if (IsDisposed || Disposing) { _engine.Stop(); return; }
         _btnConnect.Enabled = true;
 
         if (!result.started)
@@ -873,6 +1042,8 @@ public sealed class MainForm : Form
         _btnConnect.BackColor = connected ? Color.FromArgb(192, 57, 43) : Accent;
         _rbSim.Enabled = !connected;
         _rbDevice.Enabled = !connected;
+        _deviceCombo.Enabled = !connected;
+        _btnRefresh.Enabled = !connected;
         _statusPill.Text = connected ? "● 跟踪中" : "● 未连接";
         _statusPill.ForeColor = connected ? Good : Bad;
         _devStatus.Text = connected
@@ -908,11 +1079,14 @@ public sealed class MainForm : Form
     private void UpdateUi()
     {
         var frame = _engine.Latest;
+        _calibrationStatus.Text = $"原点：{(_engine.IsRunning ? _engine.CurrentOrigin?.Target.Name : null) ?? "未定位"}\n镜头：{_settings.Lens.ProjectName}\n安装补偿：{(_settings.NodalOffsetInUe ? "UE Lens File" : "Bridge")}";
+        _mountX.Enabled = _mountY.Enabled = _mountZ.Enabled =
+            _mountYaw.Enabled = _mountPitch.Enabled = _mountRoll.Enabled = !_settings.NodalOffsetInUe;
 
         _poseRateValue.Text = $"{_engine.PoseRateHz:F0} Hz";
         _readRateValue.Text = $"{_engine.ReadRateHz:F0} Hz";
 
-        if (frame.Valid)
+        if (_engine.IsRunning && frame.Valid)
         {
             _xValue.Text = frame.X.ToString("F3");
             _yValue.Text = frame.Y.ToString("F3");
@@ -947,13 +1121,61 @@ public sealed class MainForm : Form
             _statusPill.Text = "● 等待数据";
             _statusPill.ForeColor = Warn;
         }
+
+        if (++_diagTick % 4 == 0) UpdateDiagnostics(frame);
+    }
+
+    /// <summary>SDK 原始值与转换结果对照，方便和官方 viewer 的读数逐一核对。</summary>
+    private void UpdateDiagnostics(TrackedFrame frame)
+    {
+        var sb = new StringBuilder();
+        if (_engine.Source is XvisioPoseSource source && source.IsConnected)
+        {
+            SdkPose raw = source.RawPose;
+            sb.AppendLine($"设备      {source.SerialNumber}");
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "SDK 帧    {0}   置信 {1:F2}", raw.Sequence, raw.Confidence));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "SDK 位置  {0:F3} {1:F3} {2:F3} m", raw.X, raw.Y, raw.Z));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "SDK 姿态  {0:F3} {1:F3} {2:F3} {3:F3}", raw.Qx, raw.Qy, raw.Qz, raw.Qw));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "SDK 欧拉  P {0:F1}  Y {1:F1}  R {2:F1} °",
+                raw.Pitch * PoseMath.Rad2Deg, raw.Yaw * PoseMath.Rad2Deg, raw.Roll * PoseMath.Rad2Deg));
+            sb.AppendLine();
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "FD   Pan {0:F2} Tilt {1:F2} Roll {2:F2}°", frame.Pan, frame.Tilt, frame.Roll));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "FD 位置 {0:F3} {1:F3} {2:F3} m", frame.X, frame.Y, frame.Z));
+            sb.AppendLine();
+            sb.AppendLine("SDK 世界系 X右 / Y下 / Z前（Z=启动朝向）");
+            sb.AppendLine("Free-D      X右 / Y前 / Z上");
+            if (_engine.CurrentOrigin != null)
+                sb.AppendLine("已应用原点：FreeD 为相对坐标。");
+        }
+        else if (_engine.IsRunning)
+        {
+            sb.AppendLine("模拟器模式（500 Hz 合成轨迹）");
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "FD   Pan {0:F2} Tilt {1:F2} Roll {2:F2}°", frame.Pan, frame.Tilt, frame.Roll));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "FD 位置 {0:F3} {1:F3} {2:F3} m", frame.X, frame.Y, frame.Z));
+        }
+        else
+        {
+            sb.AppendLine("未连接。");
+        }
+
+        string text = sb.ToString();
+        if (_diagBox.Text != text) _diagBox.Text = text;
     }
 
     private void AppendLog(string message)
     {
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
         if (InvokeRequired)
         {
-            BeginInvoke(new Action<string>(AppendLog), message);
+            try { BeginInvoke(new Action<string>(AppendLog), message); }
+            catch (InvalidOperationException) { }
             return;
         }
 

@@ -18,7 +18,7 @@ DS80 Tracking Studio 输出监视器。
 import argparse
 import json
 import socket
-import struct
+import selectors
 import sys
 import time
 
@@ -61,58 +61,66 @@ def main():
     ap.add_argument("--seconds", type=float, default=10.0)
     args = ap.parse_args()
 
-    freed = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    freed.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    freed.bind(("127.0.0.1", args.freed_port))
-    freed.settimeout(0.5)
+    if args.seconds <= 0:
+        ap.error("--seconds 必须大于 0")
 
-    js = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    js.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    js.bind(("127.0.0.1", args.json_port))
-    js.settimeout(0.5)
-
-    print(f"监听 Free-D :{args.freed_port} / JSON :{args.json_port}，{args.seconds:.0f} 秒…")
-    freed_count = json_count = freed_bad = 0
-    last_print = 0.0
-    start = time.time()
-
-    while time.time() - start < args.seconds:
+    counts = {"Free-D": 0, "JSON": 0}
+    bad = {"Free-D": 0, "JSON": 0}
+    last_print = {"Free-D": 0.0, "JSON": 0.0}
+    sockets = []
+    with selectors.DefaultSelector() as selector:
         try:
-            data, _ = freed.recvfrom(2048)
-            parsed = decode_freed(data)
-            if parsed is None:
-                freed_bad += 1
-            else:
-                freed_count += 1
-                if time.time() - last_print > 1.0:
-                    last_print = time.time()
-                    print(
-                        "Free-D  pan={pan:8.3f} tilt={tilt:8.3f} roll={roll:8.3f}  "
-                        "pos=({x:7.3f},{y:7.3f},{z:7.3f}) m".format(**parsed)
-                    )
-        except socket.timeout:
-            pass
+            for name, port in (("Free-D", args.freed_port), ("JSON", args.json_port)):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sockets.append(sock)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+                sock.bind(("127.0.0.1", port))
+                sock.setblocking(False)
+                selector.register(sock, selectors.EVENT_READ, name)
 
-        try:
-            data, _ = js.recvfrom(4096)
-            obj = json.loads(data.decode("utf-8"))
-            json_count += 1
-            if json_count % 120 == 0:
-                print(
-                    f"JSON    seq={obj.get('seq')} valid={obj.get('valid')} "
-                    f"conf={obj.get('conf')} age={obj.get('age')}ms"
-                )
-        except socket.timeout:
-            pass
+            print(f"监听 Free-D :{args.freed_port} / JSON :{args.json_port}，{args.seconds:.0f} 秒…")
+            start = time.perf_counter()
+            deadline = start + args.seconds
+            while (remaining := deadline - time.perf_counter()) > 0:
+                for key, _ in selector.select(timeout=min(remaining, 0.1)):
+                    name = key.data
+                    # 有界排空，某一路关闭或持续高流量不会阻塞另一路。
+                    for _ in range(256):
+                        if time.perf_counter() >= deadline:
+                            break
+                        try:
+                            data, _ = key.fileobj.recvfrom(65535)
+                        except BlockingIOError:
+                            break
+                        try:
+                            parsed = decode_freed(data) if name == "Free-D" else json.loads(data.decode("utf-8"))
+                            if not isinstance(parsed, dict):
+                                raise ValueError("invalid packet")
+                        except (ValueError, UnicodeDecodeError):
+                            bad[name] += 1
+                            continue
+                        counts[name] += 1
+                        now = time.perf_counter()
+                        if now - last_print[name] >= 1.0:
+                            last_print[name] = now
+                            if name == "Free-D":
+                                print("Free-D  pan={pan:8.3f} tilt={tilt:8.3f} roll={roll:8.3f}  "
+                                      "pos=({x:7.3f},{y:7.3f},{z:7.3f}) m".format(**parsed))
+                            else:
+                                print(f"JSON    seq={parsed.get('seq')} valid={parsed.get('valid')} "
+                                      f"conf={parsed.get('conf')} age={parsed.get('age')}ms")
+            duration = time.perf_counter() - start
+        finally:
+            for sock in sockets:
+                sock.close()
 
     print()
-    print(f"统计：Free-D {freed_count} 帧（校验失败 {freed_bad}），JSON {json_count} 帧")
-    if freed_count and json_count:
-        rate = freed_count / args.seconds
-        print(f"平均 Free-D 速率 ≈ {rate:.1f} Hz")
-        print("结论：Bridge 输出正常。下一步可在 UE5 中添加 LiveLinkFreeD Source（端口 40000）。")
+    for name in counts:
+        print(f"{name}: {counts[name]} 帧，错误 {bad[name]}，平均 {counts[name] / duration:.1f} Hz")
+    if any(counts.values()):
+        print("已收到输出；未收到数据的通道可能未启用，请按配置核对。")
     else:
-        print("结论：没有收到数据。请确认 DS80 Bridge 已点击“连接”，并检查 IP / 端口。")
+        print("没有收到数据。请确认 Bridge 已连接，并检查 IP / 端口。")
 
 
 if __name__ == "__main__":
