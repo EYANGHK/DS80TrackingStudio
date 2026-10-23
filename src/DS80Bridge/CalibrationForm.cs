@@ -45,7 +45,7 @@ public sealed class CalibrationForm : Form
             ("导入 Aximmetry XML → .ulens", ImportAximmetry),
             ("新建", () => { _lensGrid.SelectedObject = new LensProject(); Status("已新建未应用的项目。"); }),
             ("加载项目", LoadLens), ("保存项目", SaveLens), ("应用项目", ApplyLens), ("应用并导出 UE 脚本", ExportLens)));
-        lens.Controls.Add(Hint("所有相机、镜头、画幅和焦距均按项目编辑。导出的是 Lens File 初始化脚本，不是已完成的标定。\n畸变、光心、焦距和 Nodal Offset 在 UE 中使用真实画面求解。变焦/对焦改变后需采集相应标定点。\nAximmetry XML 可直接转成 UE .ulens：拖入 Content Browser 即得到已填好曲线的 Lens File。"));
+        lens.Controls.Add(Hint("所有相机、镜头、画幅和焦距均按项目编辑。导出的是 Lens File 初始化脚本，不是已完成的标定。\n畸变、光心、焦距和 Nodal Offset 在 UE 中使用真实画面求解。变焦/对焦改变后需采集相应标定点。\nAximmetry XML 可转成 UE .ulens（VIVE Mars 兼容格式）；不含跟踪器安装偏移，导入后需验证光学对齐。"));
         Status("原点：" + (_engine.CurrentOrigin?.Target.Name ?? "未定位") + "；镜头：" + settings.Lens.ProjectName);
     }
 
@@ -130,7 +130,7 @@ public sealed class CalibrationForm : Form
 
         var point = document.Points[0];
         Status($"已导出 {Path.GetFileName(save.FileName)}：{document.Points.Count} 个采样点，" +
-               $"Fx={point.Fx:F5} Fy={point.Fy:F5}，K1={point.K1:F5}。拖入 UE Content Browser 即可。");
+               $"Fx={point.Fx:F5} Fy={point.Fy:F5}，K1={point.K1:F5}。安装偏移表为空；UE 需使用对应 Focus/Zoom 采样输入。");
     }
 
     private static string SafeFileName(string name)

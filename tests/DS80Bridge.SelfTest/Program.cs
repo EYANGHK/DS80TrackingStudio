@@ -679,21 +679,21 @@ internal static class Program
         Check("Distortion model",
             root.GetProperty("metadata").GetProperty("lensInfo").GetProperty("distortionModel").GetString() == "Spherical");
         Check("Sensor 单位", root.GetProperty("sensorDimensions").GetProperty("units").GetString() == "Millimeters");
-        Check("图像尺寸", root.GetProperty("imageDimensions").GetProperty("width").GetInt32() == 3840 &&
-            root.GetProperty("imageDimensions").GetProperty("height").GetInt32() == 2160);
+        Check("图像尺寸", root.GetProperty("imageDimensions").GetProperty("width").GetString() == "3840" &&
+            root.GetProperty("imageDimensions").GetProperty("height").GetString() == "2160");
 
         var tables = root.GetProperty("cameraParameterTables");
-        Check("三张参数表", tables.GetArrayLength() == 3);
+        Check("四张参数表", tables.GetArrayLength() == 4);
         Check("焦距表头", tables[0].GetProperty("parameterName").GetString() == "FocalLengthTable" &&
             tables[0].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, Fx, Fy");
         Check("光心表头", tables[1].GetProperty("parameterName").GetString() == "ImageCenterTable" &&
             tables[1].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, Cx, Cy");
-        Check("畸变表头", tables[2].GetProperty("parameterName").GetString() == "DistortionTable" &&
-            tables[2].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, K1, K2, K3, P1, P2");
+        Check("畸变表头", tables[3].GetProperty("parameterName").GetString() == "DistortionTable" &&
+            tables[3].GetProperty("header").GetString() == "FocusEncoder, ZoomEncoder, K1, K2, K3, P1, P2");
 
         string[] focalRow = tables[0].GetProperty("data").GetString()!.Split(", ");
         string[] centerRow = tables[1].GetProperty("data").GetString()!.Split(", ");
-        string[] distortionRow = tables[2].GetProperty("data").GetString()!.Split(", ");
+        string[] distortionRow = tables[3].GetProperty("data").GetString()!.Split(", ");
         Check("焦距表首行", focalRow.Length == 4 &&
             Near(double.Parse(focalRow[2], CultureInfo.InvariantCulture), 0.68570156, 1e-6) &&
             Near(double.Parse(focalRow[3], CultureInfo.InvariantCulture), 1.22265101, 1e-6));
@@ -704,6 +704,60 @@ internal static class Program
             Near(double.Parse(distortionRow[2], CultureInfo.InvariantCulture), -0.0323239, 1e-6) &&
             Near(double.Parse(distortionRow[3], CultureInfo.InvariantCulture), 0.01389615, 1e-6) &&
             Near(double.Parse(distortionRow[4], CultureInfo.InvariantCulture), 0, 1e-9));
+
+        using var reference = System.Text.Json.JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "fixtures", "vive-mars-reference.ulens")));
+        // Independent, externally produced schema fixture: catches missing tables/types.
+        void CompareShape(System.Text.Json.JsonElement actual, System.Text.Json.JsonElement expected, string path)
+        {
+            Check("Mars 字段类型 " + path, actual.ValueKind == expected.ValueKind);
+            if (actual.ValueKind != expected.ValueKind) return;
+            if (expected.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                Check("Mars 字段数 " + path, actual.EnumerateObject().Count() == expected.EnumerateObject().Count());
+                foreach (var property in expected.EnumerateObject())
+                {
+                    bool exists = actual.TryGetProperty(property.Name, out var child);
+                    Check("Mars 字段存在 " + path + "." + property.Name, exists);
+                    if (exists) CompareShape(child, property.Value, path + "." + property.Name);
+                }
+            }
+            else if (expected.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                Check("Mars 表数量 " + path, actual.GetArrayLength() == expected.GetArrayLength());
+                for (int i = 0; i < Math.Min(actual.GetArrayLength(), expected.GetArrayLength()); i++)
+                    CompareShape(actual[i], expected[i], path + "[" + i + "]");
+            }
+        }
+        CompareShape(root, reference.RootElement, "root");
+        foreach (string group in new[] { "cameraParameterTables", "encoderTables" })
+        {
+            var expected = reference.RootElement.GetProperty(group);
+            var actual = root.GetProperty(group);
+            for (int i = 0; i < expected.GetArrayLength(); i++)
+                Check("Mars 表名及列顺序 " + group + i,
+                    actual[i].GetProperty("parameterName").GetString() == expected[i].GetProperty("parameterName").GetString() &&
+                    actual[i].GetProperty("header").GetString() == expected[i].GetProperty("header").GetString());
+        }
+        Check("未复制别的安装偏移", tables[2].GetProperty("data").GetString() == "");
+        Check("缺少编码器标定时保留空表", root.GetProperty("encoderTables")[0].GetProperty("data").GetString() == "" &&
+            root.GetProperty("encoderTables")[1].GetProperty("data").GetString() == "");
+        string xml = File.ReadAllText(fixture);
+        foreach (string invalid in new[] { xml.Replace("DescType=\"0\"", "DescType=\"2\""),
+            xml.Replace("FOVX=\"72.19758\"", "FOVX=\"180\"") })
+        {
+            bool rejected = false;
+            try { AximmetryLensDocument.Parse(invalid); }
+            catch (InvalidDataException) { rejected = true; }
+            Check("拒绝不支持的模型或无效视场角", rejected);
+        }
+        var oldCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            Check("非英文系统小数点保持不变", document.ToUlensJson(3840, 2160, "", "") == json);
+        }
+        finally { CultureInfo.CurrentCulture = oldCulture; }
 
         var project = new LensProject();
         document.ApplyTo(project);

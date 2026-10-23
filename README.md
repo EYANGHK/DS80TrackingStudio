@@ -10,14 +10,16 @@
 └──────────┘           └─────────────────────┘         └──────────────────────────┘
 ```
 
-当前版本：**v0.4.0（Aximmetry XML → UE .ulens）**
+当前版本：**v0.4.1（ULENS 按 VIVE Mars 参考格式输出）**
 
-- 新增 **Aximmetry 镜头 XML → UE `.ulens`**：把焦距、光心、K1/K2/K3 直接转成 UE Lens File，拖入 Content Browser 即可用。
+- 新增 **Aximmetry 镜头 XML → UE `.ulens`**：把焦距、光心、K1/K2/K3 直接转成 UE Lens File，支持导入 Content Browser；实拍光学对齐需验证。
 - 直接调用官方 **XVSDK C++ 接口**（`xv::Slam` 回调），不再经过会把位置取反的 CInterface 封装。
 - 按 XVSDK 文档修正坐标系：设备 `X 右 / Y 下 / Z 前` → Free-D `X 右 / Y 前 / Z 上`。
 - 支持多台设备按**序列号**选择（S80 / DS80），配置里记住上次使用的设备。
 - 新增「诊断」页：并排显示 SDK 原始位姿与转换后的 Free-D 值，可直接和官方 `xvsdk-viewer` 对照。
 - 500 Hz Pose、原点定位、UE Lens File 项目管理保持不变。
+
+本次修订与导入报错说明见 [ULENS 兼容性验证](docs/06-ULENS兼容性验证.md)。
 
 自绘 Live Link 插件（带置信度、丢失状态、镜头元数据）在第二阶段实现。
 
@@ -208,7 +210,7 @@ DS80TrackingStudio/
 - 原始数据诊断页（与官方 Viewer 对照）
 - 原点定位（位置/航向或完整姿态、指定目标坐标、原点文件保存/加载）
 - 镜头项目管理与 UE Lens File 初始化脚本导出（可编辑机型、画幅、焦距等；实拍求解在 UE 完成）
-- **Aximmetry XML → UE `.ulens`**（焦距、光心、K1/K2/K3；UE 5.8 导入/导出往返验证）
+- **Aximmetry XML → UE `.ulens`**（焦距、光心、K1/K2/K3；UE 5.8.4 导入/导出参数往返验证，不代表实拍校准验收）
 - Bridge / UE 安装补偿归属切换，避免重复 Nodal Offset
 - 安装偏移（设备不在摄像机光心时的平移/旋转补偿）
 - 可选低通滤波

@@ -3,7 +3,7 @@
     "type": "LensFile",
     "version": "0.0.0",
     "lensInfo": {
-      "serialNumber": "",
+      "serialNumber": "None",
       "modelName": "2026.10.15-24mm",
       "distortionModel": "Spherical"
     },
@@ -14,30 +14,46 @@
     "userMetadata": []
   },
   "sensorDimensions": {
-    "width": 35.7,
-    "height": 20.021695217,
+    "width": "35.700000000000003",
+    "height": "20.021695217304938",
     "units": "Millimeters"
   },
   "imageDimensions": {
-    "width": 3840,
-    "height": 2160
+    "width": "3840",
+    "height": "2160"
   },
   "cameraParameterTables": [
     {
       "parameterName": "FocalLengthTable",
       "header": "FocusEncoder, ZoomEncoder, Fx, Fy",
-      "data": "0, 0, 0.685701564, 1.222651008"
+      "data": "0, 0, 0.68570156426977114, 1.2226510082559308"
     },
     {
       "parameterName": "ImageCenterTable",
       "header": "FocusEncoder, ZoomEncoder, Cx, Cy",
-      "data": "0, 0, 0.500814986, 0.494867021"
+      "data": "0, 0, 0.50081498579999995, 0.49486702100000002"
+    },
+    {
+      "parameterName": "NodalOffsetTable",
+      "header": "FocusEncoder, ZoomEncoder, Qx, Qy, Qz, Qw, Tx, Ty, Tz",
+      "data": ""
     },
     {
       "parameterName": "DistortionTable",
       "header": "FocusEncoder, ZoomEncoder, K1, K2, K3, P1, P2",
-      "data": "0, 0, -0.0323239, 0.01389615, 0, 0, 0"
+      "data": "0, 0, -0.032323900000000003, 0.013896149999999999, 0, 0, 0"
     }
   ],
-  "encoderTables": []
+  "encoderTables": [
+    {
+      "parameterName": "Focus",
+      "header": "FocusEncoder, FocusCM",
+      "data": ""
+    },
+    {
+      "parameterName": "Iris",
+      "header": "IrisEncoder, IrisFstop",
+      "data": ""
+    }
+  ]
 }

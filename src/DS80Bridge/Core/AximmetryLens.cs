@@ -102,6 +102,8 @@ public sealed class AximmetryLensDocument
         for (int i = 0; i < items.Count; i++)
         {
             XElement item = items[i];
+            if (RequiredDouble(item, "DescType") != 0)
+                throw new InvalidDataException($"第 {i + 1} 个采样点不是 OpenCV 描述类型（DescType=0），不能直接转换畸变参数。");
             double zoom = i < keys.Count ? OptionalDouble(keys[i], "Zoom", 0) : 0;
             double focus = i < keys.Count ? OptionalDouble(keys[i], "Focus", 0) : 0;
 
@@ -117,6 +119,8 @@ public sealed class AximmetryLensDocument
                 fovx = 2 * Math.Atan(sensorWidth / (2 * focal)) * PoseMath.Rad2Deg;
             if (focal <= 0 && fovx > 0)
                 focal = sensorWidth / (2 * Math.Tan(fovx * PoseMath.Deg2Rad * 0.5));
+            if (fovx <= 0 || fovx >= 180)
+                throw new InvalidDataException($"第 {i + 1} 个采样点 FOVX 必须在 0 到 180 度之间。");
 
             var center = ParseComponents(item, "Center", 2, i);
             var radial = ParseComponents(item, "Radial", 3, i);
@@ -165,7 +169,7 @@ public sealed class AximmetryLensDocument
             writer.WriteString("version", "0.0.0");
             writer.WritePropertyName("lensInfo");
             writer.WriteStartObject();
-            writer.WriteString("serialNumber", serialNumber ?? "");
+            writer.WriteString("serialNumber", string.IsNullOrWhiteSpace(serialNumber) ? "None" : serialNumber);
             writer.WriteString("modelName", string.IsNullOrWhiteSpace(lensModelName) ? Name : lensModelName);
             writer.WriteString("distortionModel", "Spherical");
             writer.WriteEndObject();
@@ -180,26 +184,32 @@ public sealed class AximmetryLensDocument
 
             writer.WritePropertyName("sensorDimensions");
             writer.WriteStartObject();
-            writer.WriteNumber("width", Round(SensorWidthMm));
-            writer.WriteNumber("height", Round(SensorHeightMm));
+            // Match the VIVE Mars exchange file's numeric strings. UE also accepts numbers.
+            writer.WriteString("width", Number(SensorWidthMm));
+            writer.WriteString("height", Number(SensorHeightMm));
             writer.WriteString("units", "Millimeters");
             writer.WriteEndObject();
 
             writer.WritePropertyName("imageDimensions");
             writer.WriteStartObject();
-            writer.WriteNumber("width", imageWidth);
-            writer.WriteNumber("height", imageHeight);
+            writer.WriteString("width", imageWidth.ToString(CultureInfo.InvariantCulture));
+            writer.WriteString("height", imageHeight.ToString(CultureInfo.InvariantCulture));
             writer.WriteEndObject();
 
             writer.WritePropertyName("cameraParameterTables");
             writer.WriteStartArray();
             WriteTable(writer, "FocalLengthTable", "FocusEncoder, ZoomEncoder, Fx, Fy", focalData);
             WriteTable(writer, "ImageCenterTable", "FocusEncoder, ZoomEncoder, Cx, Cy", centerData);
+            // An empty table means no calibrated offset. Never borrow another rig's values
+            // or insert an identity sample and present it as a measured calibration.
+            WriteTable(writer, "NodalOffsetTable", "FocusEncoder, ZoomEncoder, Qx, Qy, Qz, Qw, Tx, Ty, Tz", "");
             WriteTable(writer, "DistortionTable", "FocusEncoder, ZoomEncoder, K1, K2, K3, P1, P2", distortionData);
             writer.WriteEndArray();
 
             writer.WritePropertyName("encoderTables");
             writer.WriteStartArray();
+            WriteTable(writer, "Focus", "FocusEncoder, FocusCM", "");
+            WriteTable(writer, "Iris", "IrisEncoder, IrisFstop", "");
             writer.WriteEndArray();
 
             writer.WriteEndObject();
@@ -231,9 +241,9 @@ public sealed class AximmetryLensDocument
     }
 
     private static string Row(params double[] values)
-        => string.Join(", ", values.Select(v => Round(v).ToString("0.#########", CultureInfo.InvariantCulture)));
+        => string.Join(", ", values.Select(Number));
 
-    private static double Round(double value) => Math.Round(value, 9);
+    private static string Number(double value) => value.ToString("G17", CultureInfo.InvariantCulture);
 
     private static double RequiredDouble(XElement element, string attribute)
     {
